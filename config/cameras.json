@@ -1,0 +1,25 @@
+{
+    "cameras": [
+        {
+            "name": "Camera 1",
+            "ip": "10.1.2.10",
+            "control_port": 52381,
+            "stream_url": "rtsp://10.1.2.10/video2",
+            "inverted": true
+        },
+        {
+            "name": "Camera 2",
+            "ip": "10.1.2.9",
+            "control_port": 52381,
+            "stream_url": "rtsp://10.1.2.9/video2",
+            "inverted": true
+        },
+        {
+            "name": "Camera 3",
+            "ip": "10.1.2.8",
+            "control_port": 52381,
+            "stream_url": "rtsp://10.1.2.8/video2",
+            "inverted": true
+        }
+    ]
+}

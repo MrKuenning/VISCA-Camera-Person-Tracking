@@ -1,0 +1,9 @@
+# Requirements for VISCA Camera Video Tracking Application
+opencv-python>=4.5.0
+numpy>=1.19.0
+PyQt6>=6.6.0
+visca-over-ip>=0.1.0
+
+# Tracking dependencies (MediaPipe + PID controller)
+mediapipe>=0.10.0
+simple-pid>=2.0.0
