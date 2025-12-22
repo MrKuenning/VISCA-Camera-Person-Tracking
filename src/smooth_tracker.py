@@ -254,7 +254,7 @@ class SmoothTracker:
             self.upper_body_cascade = cv2.CascadeClassifier(
                 cv2.data.haarcascades + 'haarcascade_upperbody.xml'
             )
-        except:
+        except Exception:
             self.upper_body_cascade = None
     
     def _initialize_mediapipe(self):
@@ -446,7 +446,7 @@ class SmoothTracker:
                         max_body_area = area
                         largest_body = (x, y, bw, bh)
                         bodies.append(largest_body)
-            except:
+            except Exception:
                 pass
         
         # Correlation check for face and body
@@ -622,9 +622,6 @@ class SmoothTracker:
             # so (0 - error) gives negative output for positive error.
             # We want Positive speed for Positive error (Right), so we negate it back.
             pan_speed = -self.pan_pid(error_x)
-            # If error_x is positive (face is to the right), we want Positive pan to move right
-            # PID gives positive output for positive error, so we use it directly
-            pass
         
         if in_dead_zone_y:
             tilt_speed = 0

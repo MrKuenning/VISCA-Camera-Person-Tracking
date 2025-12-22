@@ -1,7 +1,27 @@
+"""
+DEPRECATED - Legacy Face Tracker Module
+
+This module has been replaced by SmoothTracker in smooth_tracker.py which provides:
+- MediaPipe-based detection (more accurate and stable)
+- PID controller for smooth camera movements
+- Better performance and reduced jitter
+
+This file is kept for reference only and is not used by the main application.
+"""
+
+import warnings
+warnings.warn(
+    "face_tracker.py is deprecated. Use SmoothTracker from smooth_tracker.py instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 import cv2
 import time
 import numpy as np
-from tkinter import messagebox
+
+# Note: tkinter messagebox was removed as the app uses PyQt6
+# If you need to use this legacy module, replace messagebox calls with print() or logging
 
 class FaceTracker:
     def __init__(self, camera, move_speed=5, move_threshold=50, movement_cooldown=0.2, invert_camera=False):
@@ -45,7 +65,7 @@ class FaceTracker:
             self.body_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_fullbody.xml')
             self.upper_body_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_upperbody.xml')
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load OpenCV detection models: {str(e)}")
+            print(f"[DEPRECATED FaceTracker] Error: Failed to load OpenCV detection models: {str(e)}")
             self.face_cascade = None
             self.body_cascade = None
             self.upper_body_cascade = None
@@ -58,10 +78,10 @@ class FaceTracker:
             self.dlib_detector = dlib.get_frontal_face_detector()
         except ImportError:
             self.use_dlib = False
-            messagebox.showwarning("Warning", "DLib not available. Using OpenCV for face detection only.")
+            print("[DEPRECATED FaceTracker] Warning: DLib not available. Using OpenCV for face detection only.")
         except Exception as e:
             self.use_dlib = False
-            messagebox.showwarning("Warning", f"Failed to initialize DLib detector: {str(e)}. Using OpenCV only.")
+            print(f"[DEPRECATED FaceTracker] Warning: Failed to initialize DLib detector: {str(e)}. Using OpenCV only.")
 
     def update_settings(self, move_speed, move_threshold, movement_cooldown, invert_camera):
         self.move_speed = move_speed

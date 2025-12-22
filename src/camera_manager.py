@@ -2,42 +2,39 @@ import json
 import os
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                            QLineEdit, QPushButton, QListWidget, QMessageBox, 
-                           QCheckBox, QGroupBox, QWidget, QFormLayout)
+                           QCheckBox, QGroupBox, QFormLayout)
 from PyQt6.QtCore import Qt
 
 class CameraManager:
     def __init__(self, json_path=None):
         """Initialize the camera manager with the path to the JSON file"""
         if json_path is None:
-            # Use default path in the same directory as this script
-            self.json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cameras.json")
+            # Use default path in config folder
+            self.json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "cameras.json")
         else:
             self.json_path = json_path
         
-        self.cameras = self.load_cameras()
+        self.cameras = []
+        self.load_cameras()
     
     def load_cameras(self):
         """Load camera configurations from JSON file"""
         try:
-            # Updated path to config folder
-            json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "cameras.json")
-            if os.path.exists(json_path):
-                with open(json_path, 'r') as f:
+            if os.path.exists(self.json_path):
+                with open(self.json_path, 'r') as f:
                     data = json.load(f)
                     self.cameras = data.get('cameras', [])
             else:
-                self.cameras = [] # Initialize if file doesn't exist
+                self.cameras = []  # Initialize if file doesn't exist
         except Exception as e:
             print(f"Error loading cameras: {str(e)}")
-            return []
+            self.cameras = []
         return self.cameras
     
     def save_cameras(self):
         """Save camera configurations to JSON file"""
         try:
-            # Updated path to config folder
-            json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "cameras.json")
-            with open(json_path, 'w') as f:
+            with open(self.json_path, 'w') as f:
                 json.dump({'cameras': self.cameras}, f, indent=4)
             return True
         except Exception as e:

@@ -93,8 +93,6 @@ class VideoTrackingApp(QMainWindow):
         
         # Movement control variables
         self.move_speed = 7.0
-        self.move_threshold = 50
-        self.movement_cooldown = 0.2
         
         # UI state variables
         self.show_performance = False
@@ -906,63 +904,6 @@ class VideoTrackingApp(QMainWindow):
         self.centering_timer.timeout.connect(self._centering_step)
         self.centering_timer.start(150) # Update every 150ms
 
-    
-    def _do_centering_movement(self, error_x, error_y):
-        """Execute centering movement based on error values"""
-        # Dead zone threshold - extremely tight for explicit "Center Face" action
-        dead_zone = 0.01
-        
-        if abs(error_x) < dead_zone and abs(error_y) < dead_zone:
-            self.status_bar.showMessage("Face already centered")
-            return
-        
-        # Calculate movement speeds (proportional to error, clamped)
-        max_speed = int(self.move_speed)
-        
-        # Helper to calculate speed with minimum 1
-        def calc_speed(error, mult):
-            val = int(error * max_speed * mult)
-            # If value truncated to 0 but error is outside dead zone, force min speed
-            if val == 0 and abs(error) > dead_zone:
-                return 1 if error > 0 else -1
-            return val
-        
-        # Pan speed
-        # If error_x > 0 (face is to the right of center), pan right (positive) to follow
-        if abs(error_x) > dead_zone:
-            # POSITIVE speed moves camera RIGHT. So we want positive speed when error_x is positive.
-            pan_speed = calc_speed(error_x, 2.0)
-            pan_speed = max(-max_speed, min(max_speed, pan_speed))
-        else:
-            pan_speed = 0
-        
-        # Tilt speed
-        # If error_y > 0 (face is below target), tilt down (negative) to follow
-        if abs(error_y) > dead_zone:
-            tilt_speed = calc_speed(-error_y, 1.5)  # Negate error first to get direction (Down = Negative)
-            tilt_speed = max(-max_speed, min(max_speed, tilt_speed))
-            
-            # Apply camera inversion - this only affects tilt like arrow buttons
-            if self.invert_camera:
-                tilt_speed = -tilt_speed
-
-        else:
-            tilt_speed = 0
-
-        self.status_bar.showMessage(f"Centering face... Pan={pan_speed} Tilt={tilt_speed}")
-        
-        # Start movement
-        self.camera.pantilt(pan_speed=pan_speed, tilt_speed=tilt_speed)
-        
-        # Schedule stop after a short duration (allows camera to move toward center)
-        QTimer.singleShot(800, self._stop_centering)
-    
-    def _stop_centering(self):
-        """Stop centering movement and check if more adjustment needed"""
-        if self.connected and self.camera:
-            self.camera.pantilt(pan_speed=0, tilt_speed=0)
-            self.status_bar.showMessage("Centering complete")
-    
     def _centering_step(self):
         """Single step of the centering control loop"""
         # check timeout
@@ -1216,10 +1157,20 @@ class VideoTrackingApp(QMainWindow):
         
         dialog = CameraEditorDialog(self, self.camera_manager)
         if dialog.exec():  # Modal dialog
-            # Reload cameras in the main app dropdown
+            # Reload cameras in the main app
             self.load_cameras()
-            QMessageBox.information(self, "Cameras Updated", 
-                                  "Camera list has been updated. Please check the camera dropdown.")
+            
+            # Update the combo box with new camera list
+            self.camera_combo.clear()
+            camera_names = [cam["name"] for cam in self.cameras]
+            self.camera_combo.addItems(camera_names)
+            
+            # Select first camera if available
+            if self.cameras:
+                self.camera_combo.setCurrentIndex(0)
+                self.update_camera_fields()
+            
+            self.status_bar.showMessage("Camera list updated")
 
     
     # ============ Cleanup Methods ============
