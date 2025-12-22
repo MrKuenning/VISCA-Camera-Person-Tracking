@@ -867,7 +867,7 @@ class VideoTrackingApp(QMainWindow):
             self.status_bar.showMessage("Face tracking follow enabled")
     
     def center_face(self):
-        """Center face with continuous feedback loop until centered"""
+        """Center face to portrait position with continuous feedback loop"""
         # Check prerequisites
         if not self.connected or not self.camera:
             QMessageBox.warning(self, "Warning", "Camera not connected.")
@@ -880,8 +880,18 @@ class VideoTrackingApp(QMainWindow):
         # Stop any existing centering
         if hasattr(self, 'centering_timer') and self.centering_timer.isActive():
             self.centering_timer.stop()
+        
+        # Check if face is detected before starting
+        tracker = self.tracker if self.tracker else SmoothTracker(self.camera, move_speed=self.move_speed, invert_camera=self.invert_camera)
+        faces, target = tracker.detect_faces(self.last_frame)
+        
+        if target is None:
+            QMessageBox.warning(self, "Warning", "No face detected. Please ensure a face is visible.")
+            if tracker != self.tracker:
+                tracker.close()
+            return
             
-        self.status_bar.showMessage("Centering face...")
+        self.status_bar.showMessage("Centering face to portrait position...")
         
         # State for centering loop
         self.centering_start_time = time.time()
@@ -895,9 +905,9 @@ class VideoTrackingApp(QMainWindow):
         
         # Create temp tracker if needed and store it
         if self.tracker is None:
-            self.temp_centering_tracker = SmoothTracker(self.camera, move_speed=self.move_speed, invert_camera=self.invert_camera)
+            self.temp_centering_tracker = tracker  # Reuse the one we created for detection
         else:
-            self.temp_centering_tracker = None # Use self.tracker
+            self.temp_centering_tracker = None  # Use self.tracker
             
         # Start the control loop
         self.centering_timer = QTimer()
@@ -934,9 +944,9 @@ class VideoTrackingApp(QMainWindow):
         face_center_x = x + fw / 2
         face_center_y = y + fh / 2
         
-        # Target: Center
+        # Portrait position: center horizontally, 1/3 from top vertically
         target_x = w / 2
-        target_y = h / 2
+        target_y = h / 3  # Portrait position - face should sit in upper third
         
         error_x = (face_center_x - target_x) / (w / 2)
         error_y = (face_center_y - target_y) / (h / 2)

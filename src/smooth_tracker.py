@@ -532,6 +532,11 @@ class SmoothTracker:
         """
         Control the camera to track the detected face using PID control.
         
+        Uses hysteresis tracking:
+        - Dead zone prevents STARTING movement if face is already close
+        - Once movement starts, continue until face reaches actual center
+        - This minimizes adjustments while ensuring proper centering
+        
         Args:
             frame: Current video frame (used for dimensions)
         """
@@ -540,6 +545,8 @@ class SmoothTracker:
             if self.camera_moving:
                 self.camera.pantilt(pan_speed=0, tilt_speed=0)
                 self.camera_moving = False
+                self._is_correcting_x = False
+                self._is_correcting_y = False
             return
         
         # Check confidence threshold
@@ -547,6 +554,8 @@ class SmoothTracker:
             if self.camera_moving:
                 self.camera.pantilt(pan_speed=0, tilt_speed=0)
                 self.camera_moving = False
+                self._is_correcting_x = False
+                self._is_correcting_y = False
             return
         
         # Check require_face_and_body setting
@@ -555,12 +564,16 @@ class SmoothTracker:
                 if self.camera_moving:
                     self.camera.pantilt(pan_speed=0, tilt_speed=0)
                     self.camera_moving = False
+                    self._is_correcting_x = False
+                    self._is_correcting_y = False
                 return
             
             if not self._check_face_body_correlation(self.detected_face, self.detected_body):
                 if self.camera_moving:
                     self.camera.pantilt(pan_speed=0, tilt_speed=0)
                     self.camera_moving = False
+                    self._is_correcting_x = False
+                    self._is_correcting_y = False
                 return
         
         # Get frame dimensions
@@ -571,7 +584,7 @@ class SmoothTracker:
         face_center_x = x + fw / 2
         face_center_y = y + fh / 2
         
-        # Calculate target position (center horizontally, 1/3 from top vertically)
+        # Portrait position: center horizontally, 1/3 from top vertically
         target_x = w / 2
         target_y = h / 3
         
@@ -579,23 +592,50 @@ class SmoothTracker:
         error_x = (face_center_x - target_x) / (w / 2)
         error_y = (face_center_y - target_y) / (h / 2)
         
-        # Define dead zone (center thirds box)
-        dead_zone_x = 1/3  # 1/3 of normalized range
-        dead_zone_y = 1/3
+        # Dead zone for TRIGGERING movement (larger - 1/3 of frame)
+        trigger_zone_x = 1/3
+        trigger_zone_y = 1/3
         
-        # Store center box coordinates for visualization
-        box_left = int(target_x - (dead_zone_x * w / 2))
-        box_right = int(target_x + (dead_zone_x * w / 2))
-        box_top = int(target_y - (dead_zone_y * h / 2))
-        box_bottom = int(target_y + (dead_zone_y * h / 2))
+        # Target zone for STOPPING movement (tight - near actual center)
+        target_zone = 0.05  # Stop when within 5% of center
+        
+        # Store center box coordinates for visualization (shows trigger zone)
+        box_left = int(target_x - (trigger_zone_x * w / 2))
+        box_right = int(target_x + (trigger_zone_x * w / 2))
+        box_top = int(target_y - (trigger_zone_y * h / 2))
+        box_bottom = int(target_y + (trigger_zone_y * h / 2))
         self.center_box = (box_left, box_top, box_right - box_left, box_bottom - box_top)
         
-        # Check if inside dead zone
-        in_dead_zone_x = abs(error_x) < dead_zone_x
-        in_dead_zone_y = abs(error_y) < dead_zone_y
+        # Initialize correction state if not exists
+        if not hasattr(self, '_is_correcting_x'):
+            self._is_correcting_x = False
+        if not hasattr(self, '_is_correcting_y'):
+            self._is_correcting_y = False
         
-        if in_dead_zone_x and in_dead_zone_y:
-            # Inside dead zone - stop camera
+        # Check if face is in trigger zone (for starting movement)
+        in_trigger_zone_x = abs(error_x) < trigger_zone_x
+        in_trigger_zone_y = abs(error_y) < trigger_zone_y
+        
+        # Check if face is at target (for stopping movement)
+        at_target_x = abs(error_x) < target_zone
+        at_target_y = abs(error_y) < target_zone
+        
+        # Hysteresis logic for X axis:
+        # - Start correcting if face leaves trigger zone
+        # - Stop correcting when face reaches target center
+        if not self._is_correcting_x and not in_trigger_zone_x:
+            self._is_correcting_x = True  # Face left trigger zone, start correcting
+        elif self._is_correcting_x and at_target_x:
+            self._is_correcting_x = False  # Face reached center, stop correcting
+        
+        # Hysteresis logic for Y axis
+        if not self._is_correcting_y and not in_trigger_zone_y:
+            self._is_correcting_y = True  # Face left trigger zone, start correcting
+        elif self._is_correcting_y and at_target_y:
+            self._is_correcting_y = False  # Face reached center, stop correcting
+        
+        # If not correcting on either axis, stop camera
+        if not self._is_correcting_x and not self._is_correcting_y:
             if self.camera_moving:
                 self.camera.pantilt(pan_speed=0, tilt_speed=0)
                 self.camera_moving = False
@@ -604,35 +644,27 @@ class SmoothTracker:
                     self.pan_pid.reset()
                     self.tilt_pid.reset()
                 elif PID_AVAILABLE:
-                    # simple-pid library uses different reset
                     self.pan_pid._integral = 0
                     self.tilt_pid._integral = 0
             return
         
         # Calculate PID output for pan and tilt
-        # Only apply PID if outside dead zone for that axis
-        # Direction logic must match manual arrow button controls:
-        # - Positive pan_speed = move right, negative = move left
-        # - Positive tilt_speed = move up, negative = move down (when not inverted)
+        # Only apply PID if actively correcting that axis
         
-        if in_dead_zone_x:
+        if not self._is_correcting_x:
             pan_speed = 0
         else:
-            # Negate output because simple-pid calculates (setpoint - input), 
-            # so (0 - error) gives negative output for positive error.
-            # We want Positive speed for Positive error (Right), so we negate it back.
+            # Negate output because simple-pid calculates (setpoint - input)
             pan_speed = -self.pan_pid(error_x)
         
-        if in_dead_zone_y:
+        if not self._is_correcting_y:
             tilt_speed = 0
         else:
-            # Negate output because simple-pid calculates (setpoint - input)
+            # Negate output and apply direction correction
             tilt_speed = -self.tilt_pid(error_y)
-            # If error_y is positive (face is below target), we want to tilt down (negative)
-            # PID gives positive output for positive error, so we need to negate
-            tilt_speed = -tilt_speed
+            tilt_speed = -tilt_speed  # Invert for correct direction
             
-            # Apply camera inversion - this only affects tilt like arrow buttons
+            # Apply camera inversion
             if self.invert_camera:
                 tilt_speed = -tilt_speed
 
