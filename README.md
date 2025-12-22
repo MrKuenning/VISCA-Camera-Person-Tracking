@@ -46,13 +46,7 @@ Double-click: launch_app.bat
 
 **Option 2: Python Command**
 ```bash
-python launch_app.py
-```
-
-**Option 3: Direct Launch**
-```bash
-cd src
-python main_app.py
+python app.py
 ```
 
 ## Usage
