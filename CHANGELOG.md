@@ -11,14 +11,11 @@ All notable changes to this project will be documented in this file.
 **Camera Position Presets Grid**
 Added a 3x3 grid of numbered buttons (1-9) to quickly recall the camera's built-in position presets.
 
-**App-Level Temporary Presets**
-Added store and recall functionality for temporary position presets (A, B, C) that save the camera's current pan, tilt, and zoom positions in app memory.
+**Store/Recall Presets 14-16**
+Added store and recall buttons for camera preset slots 14, 15, and 16, allowing users to save and restore additional camera positions.
 
 **Visual Preset Status Indicators**
-Recall buttons for app presets show visual feedback - grey when empty, green when a position is stored.
-
-**Position Data in Status Bar**
-When storing an app preset, the status bar displays the saved pan, tilt, and zoom values for reference.
+Recall buttons for presets 14-16 show visual feedback - grey when empty, green when a position is stored.
 
 ### Changed
 
@@ -30,7 +27,7 @@ Split the presets panel into two sections: "Camera Presets" for hardware presets
 **Camera Presets Off-By-One Error**
 Fixed preset numbering so button 1 calls camera preset 0, button 2 calls preset 1, etc. (camera uses 0-indexed presets).
 
-**App Preset Storage Reliability**
-Added retry logic for position queries when storing app presets to handle cameras that don't respond immediately.
+**App Preset Storage Using Camera Slots**
+Changed app presets (A, B, C) to use camera's built-in preset slots 14, 15, 16 instead of position queries, fixing compatibility with cameras that don't support position inquiry commands.
 
 ---

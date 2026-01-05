@@ -418,8 +418,8 @@ class VideoTrackingApp(QMainWindow):
         
         main_layout.addWidget(camera_preset_widget)
         
-        # --- App Temporary Presets Section ---
-        app_label = QLabel("App Presets (Temporary)")
+        # --- Extra Presets Section (14, 15, 16) ---
+        app_label = QLabel("Store/Recall 14-16")
         app_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(app_label)
         
@@ -428,9 +428,9 @@ class VideoTrackingApp(QMainWindow):
         store_label = QLabel("Store:")
         store_layout.addWidget(store_label)
         
-        # Store buttons A, B, C
+        # Store buttons 14, 15, 16
         self.app_preset_store_btns = {}
-        for preset_id in ['A', 'B', 'C']:
+        for preset_id in ['14', '15', '16']:
             btn = QPushButton(preset_id)
             btn.setMaximumSize(35, 35)
             btn.setToolTip(f"Store current position to preset {preset_id}")
@@ -447,7 +447,7 @@ class VideoTrackingApp(QMainWindow):
         recall_layout.addWidget(recall_label)
         
         self.app_preset_recall_btns = {}
-        for preset_id in ['A', 'B', 'C']:
+        for preset_id in ['14', '15', '16']:
             btn = QPushButton(preset_id)
             btn.setMaximumSize(35, 35)
             btn.setToolTip(f"Recall position from preset {preset_id}")
@@ -477,77 +477,46 @@ class VideoTrackingApp(QMainWindow):
             self.status_bar.showMessage("No camera connected")
     
     def store_app_preset(self, preset_id):
-        """Store current camera position to an app preset"""
+        """Store current camera position to preset slots 14, 15, 16"""
         if not self.camera:
             self.status_bar.showMessage("No camera connected")
             return
         
+        # Map 14, 15, 16 to camera preset slots 13, 14, 15 (0-indexed)
+        preset_slot_map = {'14': 13, '15': 14, '16': 15}
+        camera_slot = preset_slot_map[preset_id]
+        
         try:
-            # Get current camera position with retries
-            pan, tilt, zoom = None, None, None
+            # Use camera's built-in save_preset command
+            self.camera.save_preset(camera_slot)
             
-            # Try to get pan/tilt position
-            for attempt in range(3):
-                try:
-                    pan, tilt = self.camera.get_pantilt_position()
-                    break
-                except Exception:
-                    if attempt == 2:
-                        raise
-                    time.sleep(0.1)
-            
-            # Try to get zoom position
-            for attempt in range(3):
-                try:
-                    zoom = self.camera.get_zoom_position()
-                    break
-                except Exception:
-                    if attempt == 2:
-                        # Zoom query failed, use 0 as default
-                        zoom = 0
-            
-            # Store in app presets
-            self.app_presets[preset_id] = {
-                'pan': pan,
-                'tilt': tilt,
-                'zoom': zoom
-            }
+            # Mark as stored in app state
+            self.app_presets[preset_id] = True
             
             # Enable and style the recall button
             self.app_preset_recall_btns[preset_id].setEnabled(True)
             self.app_preset_recall_btns[preset_id].setStyleSheet("background-color: #4CAF50;")
             
-            self.status_bar.showMessage(f"Stored position to app preset {preset_id} (Pan: {pan}, Tilt: {tilt}, Zoom: {zoom})")
+            self.status_bar.showMessage(f"Stored position to preset {preset_id}")
         except Exception as e:
             self.status_bar.showMessage(f"Failed to store preset: {e}")
     
     def recall_app_preset(self, preset_id):
-        """Recall a stored app preset position"""
+        """Recall a stored preset position from slots 14, 15, 16"""
         if not self.camera:
             self.status_bar.showMessage("No camera connected")
             return
         
-        if preset_id not in self.app_presets:
-            self.status_bar.showMessage(f"App preset {preset_id} is empty")
-            return
+        # Map 14, 15, 16 to camera preset slots 13, 14, 15 (0-indexed)
+        preset_slot_map = {'14': 13, '15': 14, '16': 15}
+        camera_slot = preset_slot_map[preset_id]
         
         try:
-            preset = self.app_presets[preset_id]
-            
-            # Move camera to stored position
-            self.camera.pantilt(
-                pan_speed=24,  # Max speed for quick movement
-                tilt_speed=24,
-                pan_position=preset['pan'],
-                tilt_position=preset['tilt']
-            )
-            
-            # Set zoom position
-            self.camera.zoom_to(preset['zoom'] / 16384)  # Convert to 0-1 range
-            
-            self.status_bar.showMessage(f"Recalled app preset {preset_id}")
+            # Use camera's built-in recall_preset command
+            self.camera.recall_preset(camera_slot)
+            self.status_bar.showMessage(f"Recalled preset {preset_id}")
         except Exception as e:
-            self.status_bar.showMessage(f"Failed to recall app preset: {e}")
+            self.status_bar.showMessage(f"Failed to recall preset: {e}")
     
     def create_tracking_controls(self):
         """Create tracking control panel - just the main tracking toggles"""
