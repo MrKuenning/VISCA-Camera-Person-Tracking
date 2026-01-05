@@ -98,6 +98,8 @@ class VideoTrackingApp(QMainWindow):
         self.show_performance = False
         self.show_detector_info = False
         self.show_face_grid = False
+        self.show_dead_zone = False
+        self.show_center_target = False
         
         # Performance tracking
         self.frame_count = 0
@@ -212,6 +214,9 @@ class VideoTrackingApp(QMainWindow):
         
         # Tracking controls at top
         layout.addWidget(self.create_tracking_controls())
+        
+        # Tracking options
+        layout.addWidget(self.create_tracking_options())
         
         # UI settings below
         layout.addWidget(self.create_ui_settings())
@@ -381,23 +386,70 @@ class VideoTrackingApp(QMainWindow):
         return group
     
     def create_tracking_controls(self):
-        """Create tracking control panel"""
+        """Create tracking control panel - just the main tracking toggles"""
         group = QGroupBox("Tracking Controls")
         layout = QVBoxLayout()
         
-        # Preview and follow checkboxes
-        self.preview_check = QCheckBox("Preview Tracking")
+        # Preview checkbox
+        self.preview_check = QCheckBox("Tracking - Preview")
         self.preview_check.stateChanged.connect(self.toggle_tracking_preview)
         layout.addWidget(self.preview_check)
         
-        self.follow_check = QCheckBox("Start Tracking Camera Control")
-        self.follow_check.stateChanged.connect(self.toggle_tracking_follow)
-        layout.addWidget(self.follow_check)
+        # Start Camera Control - Large styled toggle button
+        self.follow_btn = QPushButton("▶ Start Camera Control")
+        self.follow_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 10px;
+                font-size: 12px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        self.follow_btn.clicked.connect(self.toggle_tracking_follow)
+        layout.addWidget(self.follow_btn)
         
         # Center face button
         center_btn = QPushButton("Center Face")
         center_btn.clicked.connect(self.center_face)
         layout.addWidget(center_btn)
+        
+        group.setLayout(layout)
+        return group
+
+    def create_tracking_options(self):
+        """Create tracking options panel"""
+        group = QGroupBox("Tracking Options")
+        layout = QVBoxLayout()
+        
+        # MediaPipe status indicator
+        mediapipe_status = QLabel("✓ MediaPipe + PID Tracking Active" if MEDIAPIPE_AVAILABLE else "⚠ MediaPipe not available")
+        mediapipe_status.setStyleSheet("color: green; font-weight: bold;" if MEDIAPIPE_AVAILABLE else "color: red;")
+        layout.addWidget(mediapipe_status)
+        
+        # Body tracking checkbox
+        self.body_check = QCheckBox("Track Body")
+        self.body_check.setChecked(True)
+        self.body_check.setToolTip("Fall back to body detection when face not visible")
+        self.body_check.stateChanged.connect(self.toggle_body_fallback)
+        layout.addWidget(self.body_check)
+        
+        # Require face & body
+        self.require_face_body_check = QCheckBox("Require Both Face & Body")
+        self.require_face_body_check.setToolTip("Only move camera when both face and body are detected")
+        self.require_face_body_check.stateChanged.connect(self.toggle_require_face_body)
+        layout.addWidget(self.require_face_body_check)
+        
+        # Tracking persistence
+        self.persistence_check = QCheckBox("Tracking Persistence")
+        self.persistence_check.setChecked(True)
+        self.persistence_check.setToolTip("Remember last position when target is temporarily lost")
+        self.persistence_check.stateChanged.connect(self.toggle_persistence)
+        layout.addWidget(self.persistence_check)
         
         # Camera speed slider
         speed_layout = QHBoxLayout()
@@ -411,38 +463,6 @@ class VideoTrackingApp(QMainWindow):
         self.speed_label = QLabel("7.0")
         speed_layout.addWidget(self.speed_label)
         layout.addLayout(speed_layout)
-        
-        # Tracking options
-        options_group = QGroupBox("--- Tracking Options ---")
-        options_layout = QVBoxLayout()
-        
-        # MediaPipe status indicator
-        mediapipe_status = QLabel("✓ MediaPipe + PID Tracking Active" if MEDIAPIPE_AVAILABLE else "⚠ MediaPipe not available")
-        mediapipe_status.setStyleSheet("color: green; font-weight: bold;" if MEDIAPIPE_AVAILABLE else "color: red;")
-        options_layout.addWidget(mediapipe_status)
-        
-        # Body tracking checkbox
-        self.body_check = QCheckBox("Use Body Tracking")
-        self.body_check.setChecked(True)
-        self.body_check.setToolTip("Fall back to body detection when face not visible")
-        self.body_check.stateChanged.connect(self.toggle_body_fallback)
-        options_layout.addWidget(self.body_check)
-        
-        # Require face & body
-        self.require_face_body_check = QCheckBox("Require Face & Body")
-        self.require_face_body_check.setToolTip("Only move camera when both face and body are detected")
-        self.require_face_body_check.stateChanged.connect(self.toggle_require_face_body)
-        options_layout.addWidget(self.require_face_body_check)
-        
-        # Tracking persistence
-        self.persistence_check = QCheckBox("Tracking Persistence")
-        self.persistence_check.setChecked(True)
-        self.persistence_check.setToolTip("Remember last position when target is temporarily lost")
-        self.persistence_check.stateChanged.connect(self.toggle_persistence)
-        options_layout.addWidget(self.persistence_check)
-        
-        options_group.setLayout(options_layout)
-        layout.addWidget(options_group)
         
         # Detection interval slider
         interval_layout = QHBoxLayout()
@@ -466,17 +486,25 @@ class VideoTrackingApp(QMainWindow):
         group = QGroupBox("UI Settings")
         layout = QVBoxLayout()
         
-        self.performance_check = QCheckBox("Show Performance Info")
+        self.performance_check = QCheckBox("Show Performance Status Bar")
         self.performance_check.stateChanged.connect(self.toggle_performance_display)
         layout.addWidget(self.performance_check)
         
-        self.detector_info_check = QCheckBox("Show on screen detector info")
+        self.detector_info_check = QCheckBox("Show On Screen Detector Info")
         self.detector_info_check.stateChanged.connect(self.toggle_detector_info)
         layout.addWidget(self.detector_info_check)
         
-        self.face_grid_check = QCheckBox("Show face square grid")
+        self.face_grid_check = QCheckBox("Show Grid")
         self.face_grid_check.stateChanged.connect(self.toggle_face_grid)
         layout.addWidget(self.face_grid_check)
+        
+        self.dead_zone_check = QCheckBox("Show Dead Zone")
+        self.dead_zone_check.stateChanged.connect(self.toggle_dead_zone)
+        layout.addWidget(self.dead_zone_check)
+        
+        self.center_target_check = QCheckBox("Show Center Target")
+        self.center_target_check.stateChanged.connect(self.toggle_center_target)
+        layout.addWidget(self.center_target_check)
         
         group.setLayout(layout)
         return group
@@ -682,6 +710,10 @@ class VideoTrackingApp(QMainWindow):
             if self.tracking_follow and self.tracking_target:
                 self.tracker.track_face(self.last_frame)
         
+        # Draw overlays even without tracking if specifically enabled in UI Settings
+        if (self.show_dead_zone or self.show_center_target or self.show_face_grid) and not self.tracking_preview:
+            frame_rgb = self.draw_tracking_overlay(frame_rgb)
+        
         # Calculate FPS
         self.frame_count += 1
         elapsed_time = time.time() - self.fps_start_time
@@ -719,14 +751,52 @@ class VideoTrackingApp(QMainWindow):
             cv2.line(frame, (third_w1, 0), (third_w1, h_frame), grid_color, 1)
             cv2.line(frame, (third_w2, 0), (third_w2, h_frame), grid_color, 1)
         
-        # Draw dead zone / center box
-        if self.tracker and self.tracker.center_box:
-            x, y, w, h = self.tracker.center_box
+        # Draw dead zone / center box (only if enabled via checkbox)
+        if self.show_dead_zone:
+            # Calculate dead zone: 1/3 of frame centered on target position
+            # Target position: center horizontally, 1/3 from top vertically
+            target_x = w_frame // 2
+            target_y = h_frame // 3
+            
+            # Dead zone is 1/3 of frame dimensions, centered on target
+            trigger_zone_x = 1/3
+            trigger_zone_y = 1/3
+            
+            box_left = int(target_x - (trigger_zone_x * w_frame / 2))
+            box_right = int(target_x + (trigger_zone_x * w_frame / 2))
+            box_top = int(target_y - (trigger_zone_y * h_frame / 2))
+            box_bottom = int(target_y + (trigger_zone_y * h_frame / 2))
+            
+            x, y = box_left, box_top
+            w, h = box_right - box_left, box_bottom - box_top
+            
             overlay = frame.copy()
             cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 255, 255), 2)
             cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
             cv2.putText(frame, "Dead Zone", (x, y - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        
+        # Draw center target square (where face should be centered to)
+        if self.show_center_target:
+            # Portrait position: center horizontally, 1/3 from top vertically
+            target_x = w_frame // 2
+            target_y = h_frame // 3
+            target_size = 30  # Size of the target square
+            
+            # Draw a small square at the center target position
+            x1 = target_x - target_size // 2
+            y1 = target_y - target_size // 2
+            x2 = target_x + target_size // 2
+            y2 = target_y + target_size // 2
+            
+            # Draw crosshair-style target (magenta color)
+            target_color = (255, 0, 255)  # Magenta
+            cv2.rectangle(frame, (x1, y1), (x2, y2), target_color, 2)
+            # Crosshair lines
+            cv2.line(frame, (target_x - target_size, target_y), (target_x + target_size, target_y), target_color, 1)
+            cv2.line(frame, (target_x, target_y - target_size), (target_x, target_y + target_size), target_color, 1)
+            cv2.putText(frame, "Target", (x1, y1 - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, target_color, 1)
         
         # Draw detected faces/bodies
         for (x, y, w_f, h_f) in self.detected_faces:
@@ -841,30 +911,61 @@ class VideoTrackingApp(QMainWindow):
     
     def toggle_tracking_follow(self):
         """Toggle active tracking that controls the camera"""
-        self.tracking_follow = self.follow_check.isChecked()
+        # Toggle the tracking state
+        self.tracking_follow = not self.tracking_follow
         
-        if not self.tracking_follow and self.connected:
-            # Stop camera movement
-            self.camera.pantilt(pan_speed=0, tilt_speed=0)
-            self.status_bar.showMessage("Face tracking disabled, camera stopped")
+        if not self.tracking_follow:
+            # Stopping tracking
+            if self.connected:
+                self.camera.pantilt(pan_speed=0, tilt_speed=0)
+            
+            # Update button to green "Start" state
+            self.follow_btn.setText("▶ Start Camera Control")
+            self.follow_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #4CAF50;
+                    color: white;
+                    font-weight: bold;
+                    padding: 10px;
+                    font-size: 12px;
+                    border-radius: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #45a049;
+                }
+            """)
+            self.status_bar.showMessage("Camera tracking stopped")
             return
         
-        if self.tracking_follow:
-            if not self.connected:
-                QMessageBox.warning(self, "Warning", 
-                                  "Camera not connected. Connect camera for tracking follow.")
-                self.follow_check.setChecked(False)
-                self.tracking_follow = False
-                return
-            
-            if not self.video_running:
-                QMessageBox.warning(self, "Warning", 
-                                  "Video stream not connected. Connect stream for tracking follow.")
-                self.follow_check.setChecked(False)
-                self.tracking_follow = False
-                return
-            
-            self.status_bar.showMessage("Face tracking follow enabled")
+        # Starting tracking - check prerequisites
+        if not self.connected:
+            QMessageBox.warning(self, "Warning", 
+                              "Camera not connected. Connect camera for tracking.")
+            self.tracking_follow = False
+            return
+        
+        if not self.video_running:
+            QMessageBox.warning(self, "Warning", 
+                              "Video stream not connected. Connect stream for tracking.")
+            self.tracking_follow = False
+            return
+        
+        # Update button to red "Stop" state
+        self.follow_btn.setText("⏹ Stop Camera Control")
+        self.follow_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+                font-weight: bold;
+                padding: 10px;
+                font-size: 12px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #da190b;
+            }
+        """)
+        self.status_bar.showMessage("Camera tracking enabled")
     
     def center_face(self):
         """Center face to portrait position with continuous feedback loop"""
@@ -1088,6 +1189,18 @@ class VideoTrackingApp(QMainWindow):
         self.show_face_grid = self.face_grid_check.isChecked()
         status = "enabled" if self.show_face_grid else "disabled"
         self.status_bar.showMessage(f"Face square grid {status}")
+    
+    def toggle_dead_zone(self):
+        """Toggle dead zone overlay"""
+        self.show_dead_zone = self.dead_zone_check.isChecked()
+        status = "enabled" if self.show_dead_zone else "disabled"
+        self.status_bar.showMessage(f"Dead zone overlay {status}")
+    
+    def toggle_center_target(self):
+        """Toggle center target overlay"""
+        self.show_center_target = self.center_target_check.isChecked()
+        status = "enabled" if self.show_center_target else "disabled"
+        self.status_bar.showMessage(f"Center target overlay {status}")
     
     # ============ Camera Movement Methods ============
     
