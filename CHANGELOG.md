@@ -25,4 +25,12 @@ When storing an app preset, the status bar displays the saved pan, tilt, and zoo
 **Position Presets Panel Reorganization**
 Split the presets panel into two sections: "Camera Presets" for hardware presets and "App Presets (Temporary)" for app-stored positions.
 
+### Fixed
+
+**Camera Presets Off-By-One Error**
+Fixed preset numbering so button 1 calls camera preset 0, button 2 calls preset 1, etc. (camera uses 0-indexed presets).
+
+**App Preset Storage Reliability**
+Added retry logic for position queries when storing app presets to handle cameras that don't respond immediately.
+
 ---

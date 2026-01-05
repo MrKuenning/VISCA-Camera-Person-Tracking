@@ -464,11 +464,13 @@ class VideoTrackingApp(QMainWindow):
         return group
     
     def recall_camera_preset(self, preset_number):
-        """Recall a camera's built-in position preset"""
+        """Recall a camera's built-in position preset (0-indexed on camera)"""
         if self.camera:
             try:
-                self.camera.recall_preset(preset_number)
-                self.status_bar.showMessage(f"Recalled camera preset {preset_number}")
+                # Camera presets are 0-indexed, so subtract 1
+                camera_preset = preset_number - 1
+                self.camera.recall_preset(camera_preset)
+                self.status_bar.showMessage(f"Recalled camera preset {preset_number} (slot {camera_preset})")
             except Exception as e:
                 self.status_bar.showMessage(f"Failed to recall preset: {e}")
         else:
@@ -481,9 +483,28 @@ class VideoTrackingApp(QMainWindow):
             return
         
         try:
-            # Get current camera position
-            pan, tilt = self.camera.get_pantilt_position()
-            zoom = self.camera.get_zoom_position()
+            # Get current camera position with retries
+            pan, tilt, zoom = None, None, None
+            
+            # Try to get pan/tilt position
+            for attempt in range(3):
+                try:
+                    pan, tilt = self.camera.get_pantilt_position()
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.1)
+            
+            # Try to get zoom position
+            for attempt in range(3):
+                try:
+                    zoom = self.camera.get_zoom_position()
+                    break
+                except Exception:
+                    if attempt == 2:
+                        # Zoom query failed, use 0 as default
+                        zoom = 0
             
             # Store in app presets
             self.app_presets[preset_id] = {
