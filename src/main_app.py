@@ -110,6 +110,10 @@ class VideoTrackingApp(QMainWindow):
         self.cameras = []
         self.load_cameras()
         
+        # App-level temporary presets (stored in memory)
+        # Format: {preset_num: {'pan': value, 'tilt': value, 'zoom': value}}
+        self.app_presets = {}
+        
         # Create the UI
         self.setup_ui()
     
@@ -196,6 +200,9 @@ class VideoTrackingApp(QMainWindow):
         
         # Manual controls below
         layout.addWidget(self.create_manual_controls())
+        
+        # Position presets
+        layout.addWidget(self.create_preset_controls())
         
         # Push everything to the top
         layout.addStretch()
@@ -384,6 +391,142 @@ class VideoTrackingApp(QMainWindow):
         
         group.setLayout(layout)
         return group
+    
+    def create_preset_controls(self):
+        """Create preset position control panel with camera and app presets"""
+        group = QGroupBox("Position Presets")
+        main_layout = QVBoxLayout()
+        
+        # --- Camera Built-in Presets Section ---
+        camera_label = QLabel("Camera Presets")
+        camera_label.setStyleSheet("font-weight: bold;")
+        main_layout.addWidget(camera_label)
+        
+        # Create 3x3 grid for camera presets 1-9
+        camera_preset_widget = QWidget()
+        camera_preset_grid = QGridLayout(camera_preset_widget)
+        camera_preset_grid.setSpacing(2)
+        
+        for i in range(9):
+            row = i // 3
+            col = i % 3
+            preset_num = i + 1
+            btn = QPushButton(str(preset_num))
+            btn.setMaximumSize(35, 35)
+            btn.clicked.connect(lambda checked, p=preset_num: self.recall_camera_preset(p))
+            camera_preset_grid.addWidget(btn, row, col)
+        
+        main_layout.addWidget(camera_preset_widget)
+        
+        # --- App Temporary Presets Section ---
+        app_label = QLabel("App Presets (Temporary)")
+        app_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        main_layout.addWidget(app_label)
+        
+        # Store button for app presets
+        store_layout = QHBoxLayout()
+        store_label = QLabel("Store:")
+        store_layout.addWidget(store_label)
+        
+        # Store buttons A, B, C
+        self.app_preset_store_btns = {}
+        for preset_id in ['A', 'B', 'C']:
+            btn = QPushButton(preset_id)
+            btn.setMaximumSize(35, 35)
+            btn.setToolTip(f"Store current position to preset {preset_id}")
+            btn.clicked.connect(lambda checked, p=preset_id: self.store_app_preset(p))
+            self.app_preset_store_btns[preset_id] = btn
+            store_layout.addWidget(btn)
+        
+        store_layout.addStretch()
+        main_layout.addLayout(store_layout)
+        
+        # Recall buttons for app presets
+        recall_layout = QHBoxLayout()
+        recall_label = QLabel("Recall:")
+        recall_layout.addWidget(recall_label)
+        
+        self.app_preset_recall_btns = {}
+        for preset_id in ['A', 'B', 'C']:
+            btn = QPushButton(preset_id)
+            btn.setMaximumSize(35, 35)
+            btn.setToolTip(f"Recall position from preset {preset_id}")
+            btn.setEnabled(False)  # Disabled until a position is stored
+            btn.setStyleSheet("background-color: #555;")  # Grey when empty
+            btn.clicked.connect(lambda checked, p=preset_id: self.recall_app_preset(p))
+            self.app_preset_recall_btns[preset_id] = btn
+            recall_layout.addWidget(btn)
+        
+        recall_layout.addStretch()
+        main_layout.addLayout(recall_layout)
+        
+        group.setLayout(main_layout)
+        return group
+    
+    def recall_camera_preset(self, preset_number):
+        """Recall a camera's built-in position preset"""
+        if self.camera:
+            try:
+                self.camera.recall_preset(preset_number)
+                self.status_bar.showMessage(f"Recalled camera preset {preset_number}")
+            except Exception as e:
+                self.status_bar.showMessage(f"Failed to recall preset: {e}")
+        else:
+            self.status_bar.showMessage("No camera connected")
+    
+    def store_app_preset(self, preset_id):
+        """Store current camera position to an app preset"""
+        if not self.camera:
+            self.status_bar.showMessage("No camera connected")
+            return
+        
+        try:
+            # Get current camera position
+            pan, tilt = self.camera.get_pantilt_position()
+            zoom = self.camera.get_zoom_position()
+            
+            # Store in app presets
+            self.app_presets[preset_id] = {
+                'pan': pan,
+                'tilt': tilt,
+                'zoom': zoom
+            }
+            
+            # Enable and style the recall button
+            self.app_preset_recall_btns[preset_id].setEnabled(True)
+            self.app_preset_recall_btns[preset_id].setStyleSheet("background-color: #4CAF50;")
+            
+            self.status_bar.showMessage(f"Stored position to app preset {preset_id} (Pan: {pan}, Tilt: {tilt}, Zoom: {zoom})")
+        except Exception as e:
+            self.status_bar.showMessage(f"Failed to store preset: {e}")
+    
+    def recall_app_preset(self, preset_id):
+        """Recall a stored app preset position"""
+        if not self.camera:
+            self.status_bar.showMessage("No camera connected")
+            return
+        
+        if preset_id not in self.app_presets:
+            self.status_bar.showMessage(f"App preset {preset_id} is empty")
+            return
+        
+        try:
+            preset = self.app_presets[preset_id]
+            
+            # Move camera to stored position
+            self.camera.pantilt(
+                pan_speed=24,  # Max speed for quick movement
+                tilt_speed=24,
+                pan_position=preset['pan'],
+                tilt_position=preset['tilt']
+            )
+            
+            # Set zoom position
+            self.camera.zoom_to(preset['zoom'] / 16384)  # Convert to 0-1 range
+            
+            self.status_bar.showMessage(f"Recalled app preset {preset_id}")
+        except Exception as e:
+            self.status_bar.showMessage(f"Failed to recall app preset: {e}")
     
     def create_tracking_controls(self):
         """Create tracking control panel - just the main tracking toggles"""
