@@ -931,6 +931,10 @@ class VideoTrackingApp(QMainWindow):
             cv2.putText(frame, "Target", (x1, y1 - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, target_color, 1)
         
+        # If tracking is not active, don't draw stale detection data
+        if not (self.tracking_preview or self.tracking_follow):
+            return frame
+
         # Draw detected faces/bodies
         for (x, y, w_f, h_f) in self.detected_faces:
             if self.tracker:

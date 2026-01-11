@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2026-01-11]
+
+### Fixed
+
+**Ghost Tracking Overlay**
+Fixed an issue where tracking boxes and status text would freeze on screen when tracking was disabled but "Show Center Target" was enabled. Now, dynamic tracking info is only drawn when tracking is active.
+
+---
+
 ## [2026-01-04]
 
 ### Added
