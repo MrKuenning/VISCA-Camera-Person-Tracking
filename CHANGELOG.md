@@ -6,10 +6,35 @@ All notable changes to this project will be documented in this file.
 
 ## [2026-01-11]
 
+### Added
+
+**Asynchronous Camera Control**
+Implemented a background thread handler (`AsyncCamera`) for all VISCA commands. This decouples camera movement from the main UI thread, completely eliminating the "app not responding" freezes and video stuttering caused by network latency or camera response times.
+
+**Robust Exception Handling & Crash Protection**
+Wrapped all camera communication (Pan/Tilt/Zoom) in try-except blocks. Network timeouts, socket errors, or hardware hiccups no longer cause the Python script to crash; instead, the app now gracefully logs the error and continues operating.
+
+### Changed
+
+**Refined Hysteresis Centering Logic**
+Updated the tracking algorithm to ensure the camera centers the face precisely on the target crosshair. The "Dead Zone" now acts strictly as a trigger to start movement, while the centering logic continues until the target is perfectly aligned, preventing the camera from stopping at the edge of the zone.
+
+**Persistent Tracking Settings**
+The Advanced Tracking parameters (Target X/Y, Dead Zone W/H) are now part of the global configuration. Added buttons to Save and Reset these settings, which are automatically reloaded every time the app starts.
+
 ### Fixed
 
 **Ghost Tracking Overlay**
 Fixed an issue where tracking boxes and status text would freeze on screen when tracking was disabled but "Show Center Target" was enabled. Now, dynamic tracking info is only drawn when tracking is active.
+
+---
+
+## [2026-01-11]
+
+### Fixed
+
+**Centering Behavior**
+Fixed `_centering_step` to respect user-defined Target X/Y ratios instead of using hardcoded center values.
 
 ---
 

@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox,
     QSlider, QGroupBox, QGridLayout, QStatusBar, QMessageBox
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QMutex
 from PyQt6.QtGui import QImage, QPixmap
 import cv2
 import numpy as np
@@ -21,6 +21,58 @@ import sys
 from visca_over_ip import Camera
 from camera_manager import CameraManager
 from smooth_tracker import SmoothTracker, MEDIAPIPE_AVAILABLE
+
+
+class AsyncCamera(QThread):
+    """
+    Async wrapper for Visca Camera to prevent blocking the UI thread.
+    Uses a latest-only queue for movement commands to handle network latency.
+    """
+    def __init__(self, camera_instance):
+        super().__init__()
+        self.camera = camera_instance
+        self.running = True
+        self.lock = QMutex()
+        self.pending_pan = None
+        self.pending_tilt = None
+        self.has_command = False
+        
+    def pantilt(self, pan_speed, tilt_speed):
+        """Queue a movement command, overwriting any pending ones"""
+        self.lock.lock()
+        self.pending_pan = int(pan_speed)
+        self.pending_tilt = int(tilt_speed)
+        self.has_command = True
+        self.lock.unlock()
+        
+    def stop(self):
+        """Stop the background thread"""
+        self.running = False
+        self.wait()
+        
+    def run(self):
+        """Main thread loop processing the latest command"""
+        while self.running:
+            cmd = None
+            self.lock.lock()
+            if self.has_command:
+                cmd = (self.pending_pan, self.pending_tilt)
+                self.has_command = False
+            self.lock.unlock()
+            
+            if cmd:
+                try:
+                    # Execute blocking call in this background thread
+                    self.camera.pantilt(pan_speed=cmd[0], tilt_speed=cmd[1])
+                except Exception as e:
+                    print(f"Async Camera Error: {e}")
+            else:
+                # Small sleep to prevent busy loop when idle
+                time.sleep(0.01)
+
+    def __getattr__(self, name):
+        """Proxy other attribute access to the real camera instance"""
+        return getattr(self.camera, name)
 
 
 class VideoThread(QThread):
@@ -114,6 +166,18 @@ class VideoTrackingApp(QMainWindow):
         # Format: {preset_num: {'pan': value, 'tilt': value, 'zoom': value}}
         self.app_presets = {}
         
+        # Adjustable tracking parameters (percentages 0-1)
+        # Default values (overwritten if config file exists)
+        self.target_x_ratio = 0.5       # Center horizontal
+        self.target_y_ratio = 0.33      # 1/3 from top
+        self.dead_zone_ratio_x = 0.33   # 1/3 width
+        self.dead_zone_ratio_y = 0.33   # 1/3 height
+        
+        # Load user settings if they exist
+        self.load_tracking_settings()
+        
+        # Create the UI
+        
         # Create the UI
         self.setup_ui()
     
@@ -137,6 +201,14 @@ class VideoTrackingApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load camera configurations: {str(e)}")
             self.cameras = []
+
+    def closeEvent(self, event):
+        """Cleanup threads on exit"""
+        if self.camera and hasattr(self.camera, 'stop'):
+            self.camera.stop()
+        if self.video_thread and hasattr(self.video_thread, 'stop'):
+            self.video_thread.stop()
+        event.accept()
     
     def setup_ui(self):
         """Setup the main UI with 3-column layout"""
@@ -224,6 +296,9 @@ class VideoTrackingApp(QMainWindow):
         
         # Tracking options
         layout.addWidget(self.create_tracking_options())
+        
+        # Advanced settings
+        layout.addWidget(self.create_advanced_settings())
         
         # UI settings below
         layout.addWidget(self.create_ui_settings())
@@ -599,19 +674,183 @@ class VideoTrackingApp(QMainWindow):
         
         # Detection interval slider
         interval_layout = QHBoxLayout()
-        interval_layout.addWidget(QLabel("Detection Interval:"))
+        interval_layout.addWidget(QLabel("Detect Interval:"))
         self.interval_slider = QSlider(Qt.Orientation.Horizontal)
-        self.interval_slider.setMinimum(1)  # 0.1 second
-        self.interval_slider.setMaximum(10)  # 1.0 second
-        self.interval_slider.setValue(3)  # 0.3 second default
+        self.interval_slider.setMinimum(1)
+        self.interval_slider.setMaximum(10)
+        self.interval_slider.setValue(2)  # Default 2 (every 2nd frame)
         self.interval_slider.valueChanged.connect(self.update_interval)
         interval_layout.addWidget(self.interval_slider)
-        self.interval_label = QLabel("0.3 Sec")
+        self.interval_label = QLabel("Every 2 frames")
         interval_layout.addWidget(self.interval_label)
         layout.addLayout(interval_layout)
         
         group.setLayout(layout)
         return group
+
+    def create_advanced_settings(self):
+        """Create advanced tracking settings panel"""
+        group = QGroupBox("Advanced Tracking")
+        layout = QVBoxLayout()
+        
+        # Horizontal Target Position Slider
+        x_pos_layout = QHBoxLayout()
+        x_pos_layout.addWidget(QLabel("Target X:"))
+        self.target_x_slider = QSlider(Qt.Orientation.Horizontal)
+        self.target_x_slider.setMinimum(10)
+        self.target_x_slider.setMaximum(90)
+        self.target_x_slider.setValue(int(self.target_x_ratio * 100))
+        self.target_x_slider.setToolTip("Horizontal position of target (0% = left, 100% = right)")
+        self.target_x_slider.valueChanged.connect(self.update_target_x)
+        x_pos_layout.addWidget(self.target_x_slider)
+        self.target_x_label = QLabel(f"{int(self.target_x_ratio * 100)}%")
+        x_pos_layout.addWidget(self.target_x_label)
+        layout.addLayout(x_pos_layout)
+
+        # Vertical Target Position Slider
+        y_pos_layout = QHBoxLayout()
+        y_pos_layout.addWidget(QLabel("Target Y:"))
+        self.target_y_slider = QSlider(Qt.Orientation.Horizontal)
+        self.target_y_slider.setMinimum(10)
+        self.target_y_slider.setMaximum(90)
+        self.target_y_slider.setValue(int(self.target_y_ratio * 100))
+        self.target_y_slider.setToolTip("Vertical position of target (0% = top, 100% = bottom)")
+        self.target_y_slider.valueChanged.connect(self.update_target_y)
+        y_pos_layout.addWidget(self.target_y_slider)
+        self.target_y_label = QLabel(f"{int(self.target_y_ratio * 100)}%")
+        y_pos_layout.addWidget(self.target_y_label)
+        layout.addLayout(y_pos_layout)
+        
+        # Dead Zone Width Slider
+        dz_w_layout = QHBoxLayout()
+        dz_w_layout.addWidget(QLabel("Dead Zone W:"))
+        self.dz_w_slider = QSlider(Qt.Orientation.Horizontal)
+        self.dz_w_slider.setMinimum(5)
+        self.dz_w_slider.setMaximum(80)
+        self.dz_w_slider.setValue(int(self.dead_zone_ratio_x * 100))
+        self.dz_w_slider.setToolTip("Width of the dead zone")
+        self.dz_w_slider.valueChanged.connect(self.update_dead_zone_x)
+        dz_w_layout.addWidget(self.dz_w_slider)
+        self.dz_w_label = QLabel(f"{int(self.dead_zone_ratio_x * 100)}%")
+        dz_w_layout.addWidget(self.dz_w_label)
+        layout.addLayout(dz_w_layout)
+        
+        # Dead Zone Height Slider
+        dz_h_layout = QHBoxLayout()
+        dz_h_layout.addWidget(QLabel("Dead Zone H:"))
+        self.dz_h_slider = QSlider(Qt.Orientation.Horizontal)
+        self.dz_h_slider.setMinimum(5)
+        self.dz_h_slider.setMaximum(80)
+        self.dz_h_slider.setValue(int(self.dead_zone_ratio_y * 100))
+        self.dz_h_slider.setToolTip("Height of the dead zone")
+        self.dz_h_slider.valueChanged.connect(self.update_dead_zone_y)
+        dz_h_layout.addWidget(self.dz_h_slider)
+        self.dz_h_label = QLabel(f"{int(self.dead_zone_ratio_y * 100)}%")
+        dz_h_layout.addWidget(self.dz_h_label)
+        layout.addLayout(dz_h_layout)
+        
+
+        
+        # Save / Reset Buttons
+        btn_layout = QHBoxLayout()
+        
+        save_btn = QPushButton("Save Settings")
+        save_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        save_btn.setToolTip("Save current tracking parameters as default")
+        save_btn.clicked.connect(self.save_tracking_settings)
+        btn_layout.addWidget(save_btn)
+        
+        reset_btn = QPushButton("Reset Defaults")
+        reset_btn.setStyleSheet("background-color: #f44336; color: white;")
+        reset_btn.setToolTip("Reset to factory defaults")
+        reset_btn.clicked.connect(self.reset_tracking_settings)
+        btn_layout.addWidget(reset_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        group.setLayout(layout)
+        return group
+        
+    def update_target_x(self, value):
+        """Update target horizontal position"""
+        self.target_x_ratio = value / 100.0
+        self.target_x_label.setText(f"{value}%")
+        if self.tracker:
+            self.tracker.target_x_ratio = self.target_x_ratio
+        
+    def update_target_y(self, value):
+        """Update target vertical position"""
+        self.target_y_ratio = value / 100.0
+        self.target_y_label.setText(f"{value}%")
+        if self.tracker:
+            self.tracker.target_y_ratio = self.target_y_ratio
+            
+    def update_dead_zone_x(self, value):
+        """Update dead zone width"""
+        self.dead_zone_ratio_x = value / 100.0
+        self.dz_w_label.setText(f"{value}%")
+        if self.tracker:
+            self.tracker.dead_zone_ratio_x = self.dead_zone_ratio_x
+            
+    def update_dead_zone_y(self, value):
+        """Update dead zone height"""
+        self.dead_zone_ratio_y = value / 100.0
+        self.dz_h_label.setText(f"{value}%")
+        if self.tracker:
+            self.tracker.dead_zone_ratio_y = self.dead_zone_ratio_y
+
+    def load_tracking_settings(self):
+        """Load tracking settings from JSON"""
+        try:
+            json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "tracking_settings.json")
+            if os.path.exists(json_path):
+                with open(json_path, 'r') as f:
+                    data = json.load(f)
+                    self.target_x_ratio = data.get('target_x', 0.5)
+                    self.target_y_ratio = data.get('target_y', 0.33)
+                    self.dead_zone_ratio_x = data.get('dead_zone_w', 0.33)
+                    self.dead_zone_ratio_y = data.get('dead_zone_h', 0.33)
+                    # Note: Sliders specificially set in create_advanced_settings using these values
+        except Exception as e:
+            print(f"Failed to load tracking settings: {e}")
+            
+    def save_tracking_settings(self):
+        """Save current tracking settings to JSON"""
+        try:
+            config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
+            os.makedirs(config_dir, exist_ok=True)
+            json_path = os.path.join(config_dir, "tracking_settings.json")
+            
+            data = {
+                "target_x": self.target_x_ratio,
+                "target_y": self.target_y_ratio,
+                "dead_zone_w": self.dead_zone_ratio_x,
+                "dead_zone_h": self.dead_zone_ratio_y
+            }
+            
+            with open(json_path, 'w') as f:
+                json.dump(data, f, indent=4)
+                
+            self.status_bar.showMessage("Tracking settings saved successfully")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to save settings: {str(e)}")
+            
+    def reset_tracking_settings(self):
+        """Reset tracking settings to defaults"""
+        # Set default values
+        self.target_x_ratio = 0.5
+        self.target_y_ratio = 0.33
+        self.dead_zone_ratio_x = 0.33
+        self.dead_zone_ratio_y = 0.33
+        
+        # Update sliders (which will trigger update handlers and update UI labels/tracker)
+        if hasattr(self, 'target_x_slider'):
+            self.target_x_slider.setValue(50)
+            self.target_y_slider.setValue(33)
+            self.dz_w_slider.setValue(33)
+            self.dz_h_slider.setValue(33)
+        
+        self.status_bar.showMessage("Tracking settings reset to defaults")
 
     
     def create_ui_settings(self):
@@ -694,8 +933,13 @@ class VideoTrackingApp(QMainWindow):
         if self.connected:
             # Disconnect
             if self.camera:
-                self.camera.pantilt(pan_speed=0, tilt_speed=0)
-                self.camera.close_connection()
+                try:
+                    self.camera.pantilt(pan_speed=0, tilt_speed=0)
+                    if hasattr(self.camera, 'stop'):
+                        self.camera.stop()
+                    self.camera.close_connection()
+                except Exception:
+                    pass
             self.camera = None
             self.connected = False
             # Clean up tracker
@@ -721,7 +965,9 @@ class VideoTrackingApp(QMainWindow):
             
             try:
                 port = int(port_str)
-                self.camera = Camera(ip, port)
+                real_cam = Camera(ip, port)
+                self.camera = AsyncCamera(real_cam)
+                self.camera.start()
                 self.connected = True
                 
                 # Initialize SmoothTracker (MediaPipe + PID)
@@ -733,6 +979,12 @@ class VideoTrackingApp(QMainWindow):
                 self.tracker.use_body_fallback = self.body_check.isChecked()
                 self.tracker.use_persistence = self.persistence_check.isChecked()
                 self.tracker.require_face_and_body = self.require_face_body_check.isChecked()
+                
+                # Apply current adjustable parameters
+                self.tracker.target_x_ratio = self.target_x_ratio
+                self.tracker.target_y_ratio = self.target_y_ratio
+                self.tracker.dead_zone_ratio_x = self.dead_zone_ratio_x
+                self.tracker.dead_zone_ratio_y = self.dead_zone_ratio_y
                 
                 self.camera_connect_btn.setText("Disconnect Camera")
                 self.camera_status_label.setStyleSheet("color: green; font-size: 16px;")
@@ -886,14 +1138,14 @@ class VideoTrackingApp(QMainWindow):
         
         # Draw dead zone / center box (only if enabled via checkbox)
         if self.show_dead_zone:
-            # Calculate dead zone: 1/3 of frame centered on target position
-            # Target position: center horizontally, 1/3 from top vertically
-            target_x = w_frame // 2
-            target_y = h_frame // 3
+            # Calculate dead zone: based on slider ratios
+            # Target position: slider defines pos
+            target_x = int(w_frame * self.target_x_ratio)
+            target_y = int(h_frame * self.target_y_ratio)
             
-            # Dead zone is 1/3 of frame dimensions, centered on target
-            trigger_zone_x = 1/3
-            trigger_zone_y = 1/3
+            # Dead zone dimensions based on sliders
+            trigger_zone_x = self.dead_zone_ratio_x
+            trigger_zone_y = self.dead_zone_ratio_y
             
             box_left = int(target_x - (trigger_zone_x * w_frame / 2))
             box_right = int(target_x + (trigger_zone_x * w_frame / 2))
@@ -911,9 +1163,9 @@ class VideoTrackingApp(QMainWindow):
         
         # Draw center target square (where face should be centered to)
         if self.show_center_target:
-            # Portrait position: center horizontally, 1/3 from top vertically
-            target_x = w_frame // 2
-            target_y = h_frame // 3
+            # Portrait position: configurable
+            target_x = int(w_frame * self.target_x_ratio)
+            target_y = int(h_frame * self.target_y_ratio)
             target_size = 30  # Size of the target square
             
             # Draw a small square at the center target position
@@ -1103,10 +1355,19 @@ class VideoTrackingApp(QMainWindow):
             }
         """)
         self.status_bar.showMessage("Camera tracking enabled")
+        
+        # Reset tracker's correction state so it immediately centers
+        if self.tracker:
+            self.tracker._is_correcting_x = True
+            self.tracker._is_correcting_y = True
     
     def center_face(self):
         """Center face to portrait position with continuous feedback loop"""
         # Check prerequisites
+        # Force tracker to start centering immediately
+        if self.tracker:
+            self.tracker._is_correcting_x = True
+            self.tracker._is_correcting_y = True
         if not self.connected or not self.camera:
             QMessageBox.warning(self, "Warning", "Camera not connected.")
             return
@@ -1160,7 +1421,16 @@ class VideoTrackingApp(QMainWindow):
             return
             
         # Get tracker
-        tracker = self.tracker if self.tracker else self.temp_centering_tracker
+        # Initialize default tracker if needed
+        if not self.tracker:
+             self.tracker = SmoothTracker(self.camera, move_speed=self.move_speed, invert_camera=self.invert_camera)
+             # Apply current adjustable parameters
+             self.tracker.target_x_ratio = self.target_x_ratio
+             self.tracker.target_y_ratio = self.target_y_ratio
+             self.tracker.dead_zone_ratio_x = self.dead_zone_ratio_x
+             self.tracker.dead_zone_ratio_y = self.dead_zone_ratio_y
+        
+        tracker = self.tracker
         if not tracker:
             self._stop_centering("Tracker error")
             return
@@ -1173,8 +1443,23 @@ class VideoTrackingApp(QMainWindow):
         faces, target = tracker.detect_faces(self.last_frame)
         
         if target is None:
-            # Don't stop immediately if target lost, maybe just blinked
+            # Face lost during centering
+            # Stop camera to prevent wandering
+            if self.camera:
+                self.camera.pantilt(pan_speed=0, tilt_speed=0)
+            
+            # Increment lost counter
+            if not hasattr(self, 'centering_lost_count'):
+                self.centering_lost_count = 0
+            self.centering_lost_count += 1
+            
+            # If lost for too long (e.g. > 1 second approx), abort
+            if self.centering_lost_count > 7:  # 7 * 150ms ~ 1 sec
+                self._stop_centering("Target lost")
             return
+        
+        # Reset lost counter on valid target
+        self.centering_lost_count = 0
             
         # Calculate error
         h, w = self.last_frame.shape[:2]
@@ -1182,9 +1467,9 @@ class VideoTrackingApp(QMainWindow):
         face_center_x = x + fw / 2
         face_center_y = y + fh / 2
         
-        # Portrait position: center horizontally, 1/3 from top vertically
-        target_x = w / 2
-        target_y = h / 3  # Portrait position - face should sit in upper third
+        # Portrait position: configurable
+        target_x = w * self.target_x_ratio
+        target_y = h * self.target_y_ratio
         
         error_x = (face_center_x - target_x) / (w / 2)
         error_y = (face_center_y - target_y) / (h / 2)

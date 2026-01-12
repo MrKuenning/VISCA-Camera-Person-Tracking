@@ -208,6 +208,12 @@ class SmoothTracker:
         self.face_confidence = 0.0
         self.center_box = None
         
+        # Adjustable tracking parameters
+        self.target_x_ratio = 0.5      # Target horizontal position (0-1)
+        self.target_y_ratio = 1/3      # Target vertical position (0-1)
+        self.dead_zone_ratio_x = 1/3   # Dead zone width ratio (0-1)
+        self.dead_zone_ratio_y = 1/3   # Dead zone height ratio (0-1)
+        
         # Tracking mode flags
         self.use_body_fallback = True
         self.use_persistence = True
@@ -243,6 +249,10 @@ class SmoothTracker:
         self.last_pan_speed = 0
         self.last_tilt_speed = 0
         self.camera_moving = False
+        
+        # Command rate limiting
+        self.last_command_time = 0
+        self.command_interval = 0.1  # Max 10 commands per second
         
         # Initialize MediaPipe detectors
         self.mp_face_detection = None
@@ -569,12 +579,14 @@ class SmoothTracker:
                 return
             
             if not self._check_face_body_correlation(self.detected_face, self.detected_body):
-                if self.camera_moving:
-                    self.camera.pantilt(pan_speed=0, tilt_speed=0)
-                    self.camera_moving = False
-                    self._is_correcting_x = False
-                    self._is_correcting_y = False
-                return
+                # Only punish correlation failure if strict mode is ON
+                if self.require_face_and_body:
+                    if self.camera_moving:
+                        self.camera.pantilt(pan_speed=0, tilt_speed=0)
+                        self.camera_moving = False
+                        self._is_correcting_x = False
+                        self._is_correcting_y = False
+                    return
         
         # Get frame dimensions
         h, w = frame.shape[:2]
@@ -584,17 +596,17 @@ class SmoothTracker:
         face_center_x = x + fw / 2
         face_center_y = y + fh / 2
         
-        # Portrait position: center horizontally, 1/3 from top vertically
-        target_x = w / 2
-        target_y = h / 3
+        # Portrait position: configurable horizontally and vertically
+        target_x = w * self.target_x_ratio
+        target_y = h * self.target_y_ratio
         
         # Calculate normalized error (-1 to 1 range)
         error_x = (face_center_x - target_x) / (w / 2)
         error_y = (face_center_y - target_y) / (h / 2)
         
-        # Dead zone for TRIGGERING movement (larger - 1/3 of frame)
-        trigger_zone_x = 1/3
-        trigger_zone_y = 1/3
+        # Dead zone for TRIGGERING movement (configurable)
+        trigger_zone_x = self.dead_zone_ratio_x
+        trigger_zone_y = self.dead_zone_ratio_y
         
         # Target zone for STOPPING movement (tight - near actual center)
         target_zone = 0.05  # Stop when within 5% of center
@@ -606,46 +618,56 @@ class SmoothTracker:
         box_bottom = int(target_y + (trigger_zone_y * h / 2))
         self.center_box = (box_left, box_top, box_right - box_left, box_bottom - box_top)
         
-        # Initialize correction state if not exists
+        # Initialize correction state (starts FALSE - don't move if already inside)
         if not hasattr(self, '_is_correcting_x'):
             self._is_correcting_x = False
         if not hasattr(self, '_is_correcting_y'):
             self._is_correcting_y = False
         
-        # Check if face is in trigger zone (for starting movement)
-        in_trigger_zone_x = abs(error_x) < trigger_zone_x
-        in_trigger_zone_y = abs(error_y) < trigger_zone_y
+        # Check if face is in dead zone (for deciding whether to START moving)
+        in_dead_zone_x = abs(error_x) < trigger_zone_x
+        in_dead_zone_y = abs(error_y) < trigger_zone_y
         
-        # Check if face is at target (for stopping movement)
+        # Check if face is at target center (for deciding when to STOP moving)
         at_target_x = abs(error_x) < target_zone
         at_target_y = abs(error_y) < target_zone
         
         # Hysteresis logic for X axis:
-        # - Start correcting if face leaves trigger zone
-        # - Stop correcting when face reaches target center
-        if not self._is_correcting_x and not in_trigger_zone_x:
-            self._is_correcting_x = True  # Face left trigger zone, start correcting
+        # - START correcting when face LEAVES the dead zone
+        # - STOP correcting when face REACHES the target center
+        if not self._is_correcting_x and not in_dead_zone_x:
+            self._is_correcting_x = True  # Face left dead zone, start centering
         elif self._is_correcting_x and at_target_x:
-            self._is_correcting_x = False  # Face reached center, stop correcting
+            self._is_correcting_x = False  # Face reached center, stop
         
         # Hysteresis logic for Y axis
-        if not self._is_correcting_y and not in_trigger_zone_y:
-            self._is_correcting_y = True  # Face left trigger zone, start correcting
+        if not self._is_correcting_y and not in_dead_zone_y:
+            self._is_correcting_y = True
         elif self._is_correcting_y and at_target_y:
-            self._is_correcting_y = False  # Face reached center, stop correcting
+            self._is_correcting_y = False
         
         # If not correcting on either axis, stop camera
         if not self._is_correcting_x and not self._is_correcting_y:
             if self.camera_moving:
-                self.camera.pantilt(pan_speed=0, tilt_speed=0)
+                try:
+                    self.camera.pantilt(pan_speed=0, tilt_speed=0)
+                except Exception as e:
+                    print(f"Error stopping camera: {e}")
+                
                 self.camera_moving = False
                 # Reset PID integrators when stopped
-                if hasattr(self.pan_pid, 'reset'):
-                    self.pan_pid.reset()
-                    self.tilt_pid.reset()
-                elif PID_AVAILABLE:
-                    self.pan_pid._integral = 0
-                    self.tilt_pid._integral = 0
+                try:
+                    if hasattr(self.pan_pid, 'reset'):
+                        self.pan_pid.reset()
+                        self.tilt_pid.reset()
+                    elif PID_AVAILABLE:
+                        if hasattr(self.pan_pid, '_integral'):
+                            self.pan_pid._integral = 0
+                        if hasattr(self.tilt_pid, '_integral'):
+                            self.tilt_pid._integral = 0
+                except Exception as e:
+                    print(f"Error resetting PID: {e}")
+
             return
         
         # Calculate PID output for pan and tilt
@@ -654,13 +676,11 @@ class SmoothTracker:
         if not self._is_correcting_x:
             pan_speed = 0
         else:
-            # Negate output because simple-pid calculates (setpoint - input)
             pan_speed = -self.pan_pid(error_x)
         
         if not self._is_correcting_y:
             tilt_speed = 0
         else:
-            # Negate output and apply direction correction
             tilt_speed = -self.tilt_pid(error_y)
             tilt_speed = -tilt_speed  # Invert for correct direction
             
@@ -678,15 +698,28 @@ class SmoothTracker:
         pan_speed = max(-max_speed, min(max_speed, pan_speed))
         tilt_speed = max(-max_speed, min(max_speed, tilt_speed))
         
-        # Only send command if speeds changed significantly
-        if (abs(pan_speed - self.last_pan_speed) > 0 or 
-            abs(tilt_speed - self.last_tilt_speed) > 0 or
-            not self.camera_moving):
-            
-            self.camera.pantilt(pan_speed=pan_speed, tilt_speed=tilt_speed)
-            self.last_pan_speed = pan_speed
-            self.last_tilt_speed = tilt_speed
-            self.camera_moving = (pan_speed != 0 or tilt_speed != 0)
+        # Rate limiting check
+        current_time = time.time()
+        is_stop_command = (pan_speed == 0 and tilt_speed == 0)
+        
+        # Always send stop commands immediately
+        # For movement commands, respect the interval
+        if is_stop_command or (current_time - self.last_command_time >= self.command_interval):
+            # Only send command if speeds changed significantly or it's been a while (keep-alive)
+            # OR if it is a stop command that hasn't been sent yet
+            if (abs(pan_speed - self.last_pan_speed) > 0 or 
+                abs(tilt_speed - self.last_tilt_speed) > 0 or
+                not self.camera_moving):
+                
+                try:
+                    self.camera.pantilt(pan_speed=pan_speed, tilt_speed=tilt_speed)
+                    self.last_pan_speed = pan_speed
+                    self.last_tilt_speed = tilt_speed
+                    self.camera_moving = (pan_speed != 0 or tilt_speed != 0)
+                    self.last_command_time = current_time
+                except Exception as e:
+                    print(f"Error moving camera: {e}")
+                    # Don't update state if failed, retry next frame
     
     def draw_center_box(self, frame):
         """Draw the center thirds box (dead zone) on the frame"""
